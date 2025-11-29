@@ -1,3 +1,4 @@
+# monitor.py
 import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -5,30 +6,43 @@ from backup import run_backup
 from notify import notify
 from config import MONITOR_FOLDER
 
+DEBOUNCE_SECONDS = 2  # wait time between runs
+
 class ChangeHandler(FileSystemEventHandler):
     last_run = 0
 
-    def on_any_event(self, event):
+    def on_modified(self, event):
         now = time.time()
 
-        # debounce: ignore events within 2 seconds of the last run
-        if now - self.last_run < 2:
+        # Ignore changes in directories themselves
+        if event.is_directory:
+            return
+
+        # Debounce: avoid firing multiple times per quick burst of events
+        if now - self.last_run < DEBOUNCE_SECONDS:
             return
 
         self.last_run = now
-        print("Change detected → Running backup...")
 
-        if run_backup():
+        print(f"Change detected in: {event.src_path}")
+        result = run_backup()
+
+        if result == "success":
             notify("Backup Completed Successfully!")
-        else:
-            notify("Backup Failed. Check the system.")
-            
+        elif result == "error":
+            # Optional: you can comment this out if you don't want failure messages
+            notify("Backup Failed. Check the system logs.")
+        elif result == "no_changes":
+            # Silent case – don't spam WebEx
+            print("No new changes; not sending WebEx notification.")
+
 
 if __name__ == "__main__":
     observer = Observer()
     event_handler = ChangeHandler()
     observer.schedule(event_handler, MONITOR_FOLDER, recursive=True)
-    print("Monitoring started...")
+
+    print(f"Monitoring started on: {MONITOR_FOLDER}")
     observer.start()
 
     try:
