@@ -1,4 +1,3 @@
-# monitor.py
 import time
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -6,42 +5,48 @@ from backup import run_backup
 from notify import notify
 from config import MONITOR_FOLDER
 
-DEBOUNCE_SECONDS = 2  # wait time between runs
+DEBOUNCE_SECONDS = 2  # to avoid multiple triggers
 
 class ChangeHandler(FileSystemEventHandler):
     last_run = 0
 
-    def on_modified(self, event):
+    def _maybe_run_backup(self, reason: str):
         now = time.time()
-
-        # Ignore changes in directories themselves
-        if event.is_directory:
-            return
-
-        # Debounce: avoid firing multiple times per quick burst of events
         if now - self.last_run < DEBOUNCE_SECONDS:
             return
 
         self.last_run = now
-
-        print(f"Change detected in: {event.src_path}")
+        print(f"{reason} → running backup...")
         result = run_backup()
 
         if result == "success":
             notify("Backup Completed Successfully!")
         elif result == "error":
-            # Optional: you can comment this out if you don't want failure messages
             notify("Backup Failed. Check the system logs.")
         elif result == "no_changes":
-            # Silent case – don't spam WebEx
-            print("No new changes; not sending WebEx notification.")
+            print("No changes detected by git; skipping WebEx notification.")
+
+    def on_created(self, event):
+        if event.is_directory:
+            self._maybe_run_backup(f"Folder created: {event.src_path}")
+        else:
+            self._maybe_run_backup(f"File created: {event.src_path}")
+
+    def on_deleted(self, event):
+        if event.is_directory:
+            self._maybe_run_backup(f"Folder deleted: {event.src_path}")
+        else:
+       	    self._maybe_run_backup(f"File deleted: {event.src_path}")
+
+    def on_modified(self, event):
+        if not event.is_directory:
+            self._maybe_run_backup(f"File modified: {event.src_path}")
 
 
 if __name__ == "__main__":
     observer = Observer()
-    event_handler = ChangeHandler()
-    observer.schedule(event_handler, MONITOR_FOLDER, recursive=True)
-
+    handler = ChangeHandler()
+    observer.schedule(handler, MONITOR_FOLDER, recursive=True)
     print(f"Monitoring started on: {MONITOR_FOLDER}")
     observer.start()
 
@@ -50,5 +55,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
-
     observer.join()
